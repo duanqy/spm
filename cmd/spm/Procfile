@@ -1,0 +1,6 @@
+task minio {
+    dir /Users/duanquanyong/workspace/test
+    command /Users/duanquanyong/bin/coredns
+    user duanquanyong
+    env A=B C=E
+}

@@ -66,7 +66,10 @@ func main() {
 		return nil
 	}
 
-	app.Run(os.Args)
+	err := app.Run(os.Args)
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
 func handleCliCommand(c *cli.Context, command string) {
@@ -92,7 +95,7 @@ func handleCliCommand(c *cli.Context, command string) {
 			log.Fatal(err)
 		}
 
-		var j []spm.Job
+		var j []spm.Task
 		if args := c.Args()[1:]; len(args) > 0 {
 			for _, arg := range args {
 				exist := false
@@ -209,24 +212,31 @@ func startDaemon(c *cli.Context) {
 	log.Println("deamon started")
 
 	<-quit
-	sock.Close()
+	err := sock.Close()
+	if err != nil {
+		log.Println("close sock error: ", err)
+	}
 	manager.StopAll()
 
 	log.Println("deamon ended")
 }
 
 func handleMessage(mes spm.Message, conn *spm.Socket, manager *spm.Manager, quit chan bool) {
+	defer func() {
+		if err := conn.Close(); err != nil {
+			log.Println("close conn error: ",err)
+		}
+	}()
+
 	switch mes.Command {
 	case "start":
 		go manager.StartAll(mes.Jobs)
-		conn.Close()
 	case "list":
 		if err := conn.Send(spm.Message{
 			JobList: manager.List(),
 		}); err != nil {
 			log.Println(err)
 		}
-		conn.Close()
 	case "stop":
 		if args := mes.Arguments; len(args) > 0 {
 			for _, arg := range args {
@@ -235,18 +245,16 @@ func handleMessage(mes spm.Message, conn *spm.Socket, manager *spm.Manager, quit
 		} else {
 			manager.StopAll()
 		}
-		conn.Close()
 	case "logs":
 		job := mes.Arguments[0]
 		if job == "" {
-			conn.Close()
+			return
 		}
 		if err := conn.Send(spm.Message{
 			JobLogs: manager.ReadLog(job, 200),
 		}); err != nil {
 			log.Println(err)
 		}
-		conn.Close()
 	}
 }
 
