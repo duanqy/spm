@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -13,39 +14,46 @@ import (
 )
 
 type Manager struct {
-	mu   sync.Mutex // protects following
-	Jobs map[string]Job
+	mu    sync.Mutex // protects following
+	Tasks map[string]Task
 }
 
 func NewManager() *Manager {
 	return &Manager{
-		Jobs: make(map[string]Job),
+		Tasks: make(map[string]Task),
 	}
 }
 
-func (m *Manager) StartAll(jobs []Job) {
-	for _, job := range jobs {
-		m.Start(job)
+func (m *Manager) StartAll(tasks []Task) {
+	for _, task := range tasks {
+		m.Start(task)
 	}
 }
 
-func (m *Manager) Start(job Job) {
-	_, exists := m.Jobs[job.Name]
-	if exists {
-		log.Println(fmt.Sprintf("wont start job '%s' because already running", job.Name))
+func (m *Manager) Start(task Task) {
+	if !task.Valid() {
+		log.Println("task", task.Name, "包含无效命令")
 		return
 	}
 
-	logging, err := NewLogging(job.Name)
+	_, exists := m.Tasks[task.Name]
+	if exists {
+		log.Println(fmt.Sprintf("wont start task '%s' because already running", task.Name))
+		return
+	}
+
+	logging, err := NewLogging(task.Name)
 	if err != nil {
 		log.Fatal(err)
 	} else {
-		job.Logging = logging
+		task.Logging = logging
 	}
 
-	c := exec.Command("sh", "-c", job.Command)
-	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
+	c := exec.Command(task.Command[0], task.Command[1:]...)
+	if err := setupUserAndGroup(c, task);err != nil {
+		log.Fatalln("failed to set up running user", err)
+	}
 	pr, pw, err := os.Pipe()
 	if err != nil {
 		log.Fatal(err)
@@ -53,25 +61,34 @@ func (m *Manager) Start(job Job) {
 
 	c.Stderr = pw
 	c.Stdout = pw
-
-	job.NotifyEnd = make(chan bool)
-	job.Cmd = c
+	c.Env = make([]string, 0, 100)
+	for _,e := range os.Environ() {
+		if !strings.HasPrefix(e, "HOME=") {
+			c.Env = append(c.Env, e)
+		}
+	}
+	c.Env = append(c.Env, task.Env...)
+	if task.Dir != "" {
+		c.Dir = task.Dir
+	}
+	task.NotifyEnd = make(chan bool)
+	task.Cmd = c
 
 	m.mu.Lock()
-	m.Jobs[job.Name] = job
+	m.Tasks[task.Name] = task
 	m.mu.Unlock()
 
-	log.Println(fmt.Sprintf("job `%s` has been started", job.Name))
+	log.Println(fmt.Sprintf("task `%s` has been started", task.Name))
 	if err := c.Start(); err != nil {
 		log.Println(err)
-		go m.jobEnded(job)
+		go m.taskEnded(task)
 		return
 	}
 
 	// read command's stdout line by line
 	in := bufio.NewScanner(pr)
 	go func() {
-		if err := job.Logging.Output(in); err != nil {
+		if err := task.Logging.Output(in); err != nil {
 			log.Fatal(err)
 		}
 	}()
@@ -80,62 +97,69 @@ func (m *Manager) Start(job Job) {
 		if err := c.Wait(); err != nil {
 			log.Println(err)
 		}
-		m.jobEnded(job)
+		m.taskEnded(task)
 	}()
 }
 
-func (m *Manager) jobEnded(job Job) {
+func (m *Manager) taskEnded(task Task) {
 	m.mu.Lock()
-	delete(m.Jobs, job.Name)
+	delete(m.Tasks, task.Name)
 	m.mu.Unlock()
-	job.Logging.Close()
-	log.Println(fmt.Sprintf("job `%s` ended", job.Name))
-	job.NotifyEnd <- true
+	if err := task.Logging.Close();err != nil {
+		log.Println("close task.Logging:",err)
+	}
+	log.Println(fmt.Sprintf("task `%s` ended", task.Name))
+	task.NotifyEnd <- true
 }
 
-func (m *Manager) Stop(job string) {
+func (m *Manager) Stop(task string) {
 	m.mu.Lock()
-	j, exists := m.Jobs[job]
+	j, exists := m.Tasks[task]
 	m.mu.Unlock()
 	if !exists {
 		return
 	}
-	pid, _ := syscall.Getpgid(j.Cmd.Process.Pid)
-	syscall.Kill(-pid, syscall.SIGTERM)
+	//pid, _ := syscall.Getpgid(j.Cmd.Process.Pid)
+	//if err := syscall.Kill(-pid, syscall.SIGTERM);err != nil {
+	//	log.Println(err)
+	//}
+	if err := j.Cmd.Process.Signal(syscall.SIGTERM);err != nil {
+		log.Println(err)
+	}
 	<-j.NotifyEnd
 }
 
 func (m *Manager) StopAll() {
 	var wg sync.WaitGroup
-	for job, _ := range m.Jobs {
+	for task := range m.Tasks {
 		wg.Add(1)
-		go func(job string) {
-			m.Stop(job)
+		go func(task string) {
+			m.Stop(task)
 			wg.Done()
-		}(job)
+		}(task)
 	}
 
 	wg.Wait()
 }
 
-func (m *Manager) List() (jobs []string) {
+func (m *Manager) List() (tasks []string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for job, _ := range m.Jobs {
-		jobs = append(jobs, job)
+	for task := range m.Tasks {
+		tasks = append(tasks, task)
 	}
-	return jobs
+	return tasks
 }
 
 // ReadLog reads last n lines of the file that corresponds to job.
-func (m *Manager) ReadLog(job string, n int) (lines []string) {
-	_, exists := m.Jobs[job]
+func (m *Manager) ReadLog(task string, n int) (lines []string) {
+	_, exists := m.Tasks[task]
 	if !exists {
-		lines = append(lines, "job "+job+" is not running")
+		lines = append(lines, "task "+task+" is not running")
 		return
 	}
 
-	file := m.Jobs[job].Logging.Logfile
+	file := m.Tasks[task].Logging.Logfile
 	scanner := reverse.NewScanner(file)
 	for i := 0; i < n && scanner.Scan(); i++ {
 		lines = append(lines, scanner.Text())

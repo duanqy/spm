@@ -12,12 +12,13 @@ type Task struct {
 	NotifyEnd chan bool `json:"-"`
 	Cmd       *exec.Cmd `json:"-"`
 
+	Chroot string
 	Dir string
 	User  string
 	Group string
 	Env   []string
 }
 
-func (j Task)Valid() bool  {
-	return j.Name != "" && len(j.Command) > 0
+func (t Task)Valid() bool  {
+	return t.Name != "" && len(t.Command) > 0
 }

@@ -1,67 +1,141 @@
 package spm
 
 import (
-	"bufio"
 	"bytes"
 	"errors"
+	"fmt"
+	"github.com/mholt/caddy/caddyfile"
 	"io"
-	"strings"
+	"io/ioutil"
+	"os/user"
+	"path/filepath"
 )
 
 type Parser struct {
-	r io.Reader
+	filename string
+	r        io.Reader
+	cfg      []byte
 }
 
 func NewParser(r io.Reader) *Parser {
 	return &Parser{r: r}
 }
 
-func (p *Parser) Parse() (jobs []Job, err error) {
-	reader := bufio.NewReader(p.r)
+func (p *Parser) Parse() (jobs []Task, err error) {
+	p.cfg, err = ioutil.ReadAll(p.r)
+	if err != nil {
+		return nil, err
+	}
+	d := caddyfile.NewDispenser(p.filename, bytes.NewBuffer(p.cfg))
 
-	for {
-		job := Job{}
-		var lines []byte
+	return parseTasks(d)
+}
 
-		for {
-			line, _, err := reader.ReadLine()
-			if err == io.EOF {
-				return jobs, nil
+func parseTasks(d caddyfile.Dispenser) ([]Task, error) {
+	var task Task
+	tasks := make([]Task, 0, 10)
+	for d.Next() {
+		val := d.Val()
+		args := d.RemainingArgs()
+		switch val {
+		case "task":
+			var task Task
+			if len(args) >= 1 {
+				task.Name = args[0]
 			}
-			if err != nil {
-				return jobs, err
+			for d.NextBlock() {
+				val := d.Val()
+				args := d.RemainingArgs()
+				if err := updateTask(&task, d, val, args); err != nil {
+					return nil, err
+				}
 			}
-
-			// trim leading and trailing spaces
-			line = bytes.TrimSpace(line)
-
-			if len(line) == 0 {
-				continue
-			} else if line[0] == '#' {
-				continue
-			} else if len(line) > 0 && line[len(line)-1] == '\\' {
-				lines = append(lines, line[:len(line)-1]...)
-				continue
-			} else {
-				lines = append(lines, line...)
+			tasks = append(tasks, task)
+		default:
+			if err := updateTask(&task, d, val, args); err != nil {
+				return nil, err
 			}
-
-			sp := strings.SplitN(string(lines), ":", 2)
-			if len(sp) < 2 {
-				return jobs, errors.New("spm: missing command")
-			}
-
-			job.Name = sp[0]
-			commandsStr := sp[1]
-
-			if job.Name == "" {
-				return jobs, errors.New("spm: invalid name")
-			}
-
-			job.Command = strings.Trim(commandsStr, " ")
-
-			jobs = append(jobs, job)
-			break
 		}
 	}
+	if task.Valid() {
+		tasks = append(tasks, task)
+	}
+
+	return tasks, nil
+}
+
+func updateTask(task *Task, d caddyfile.Dispenser, key string, args []string) error {
+	switch key {
+	case "name":
+		if task.Name != "" {
+			return fmt.Errorf("set name two times")
+		}
+		if len(args) != 1 {
+			return d.ArgErr()
+		}
+		if args[0] == "" {
+			return errors.New("task name can not be empty")
+		}
+		task.Name = args[0]
+	case "command":
+		if len(task.Command) > 0 {
+			return fmt.Errorf("set command two times")
+		}
+		if len(args) < 1 {
+			return d.ArgErr()
+		}
+		task.Command = args
+	case "user":
+		if task.User != "" {
+			return fmt.Errorf("set user two times")
+		}
+		if len(args) != 1 {
+			return d.ArgErr()
+		}
+		if _, err := user.Lookup(args[0]); err != nil {
+			return err
+		}
+		task.User = args[0]
+	case "group":
+		if task.Group != "" {
+			return fmt.Errorf("set group two times")
+		}
+		if len(args) != 1 {
+			return d.ArgErr()
+		}
+		if _, err := user.LookupGroup(args[0]); err != nil {
+			return err
+		}
+		task.Group = args[0]
+	case "env":
+		if task.Env == nil {
+			task.Env = make([]string, 0, 10)
+		}
+		task.Env = append(task.Env, args...)
+	case "dir":
+		if task.Dir != "" {
+			return fmt.Errorf("set dir two times")
+		}
+		if len(args) != 1 {
+			return d.ArgErr()
+		}
+		if !filepath.IsAbs(args[0]) {
+			return fmt.Errorf("dir %s is not an absolute address", args[0])
+		}
+		task.Dir = args[0]
+	case "chroot":
+		if task.Chroot != "" {
+			return fmt.Errorf("set chroot two times")
+		}
+		if len(args) != 1 {
+			return d.ArgErr()
+		}
+		if !filepath.IsAbs(args[0]) {
+			return fmt.Errorf("chroot %s is not an absolute address", args[0])
+		}
+		task.Chroot = args[0]
+	default:
+		return errors.New("unsupported directive " + key)
+	}
+	return nil
 }

@@ -2,6 +2,7 @@ package spm
 
 import (
 	"encoding/json"
+	"log"
 	"net"
 	"sync"
 )
@@ -32,7 +33,7 @@ type Message struct {
 	// Command can be "empty", start, stop and etc.
 	Command   string
 	Arguments []string
-	Jobs      []Job
+	Jobs      []Task
 	JobList   []string
 	JobLogs   []string
 }
@@ -60,7 +61,9 @@ func (s *Socket) Close() error {
 		}
 		s.mu.Lock()
 		for _, sock := range s.Connections {
-			sock.Close()
+			if err := sock.Close();err != nil {
+				log.Println("close sock error: ",err)
+			}
 		}
 		s.mu.Unlock()
 	}
