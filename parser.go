@@ -134,6 +134,14 @@ func updateTask(task *Task, d caddyfile.Dispenser, key string, args []string) er
 			return fmt.Errorf("chroot %s is not an absolute address", args[0])
 		}
 		task.Chroot = args[0]
+	case "need":
+		if task.Need == nil {
+			task.Need = make([][]string, 0, 10)
+		}
+		if len(args) < 1 {
+			return d.ArgErr()
+		}
+		task.Need = append(task.Need, args)
 	default:
 		return errors.New("unsupported directive " + key)
 	}

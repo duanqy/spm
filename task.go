@@ -17,6 +17,7 @@ type Task struct {
 	User  string
 	Group string
 	Env   []string
+	Need [][]string
 }
 
 func (t Task)Valid() bool  {
