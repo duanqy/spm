@@ -3,25 +3,31 @@ package spm
 import (
 	"bufio"
 	"fmt"
+
 	"math/rand"
 	"os"
 	"time"
 
 	"github.com/mattn/go-isatty"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
-type Logging struct {
-	Prefix   string
+type Logger struct {
+	Prefix   []byte
 	LogColor int
-	Logfile  *os.File
+
+	Logfile  *lumberjack.Logger
+	filename string
 }
 
-func NewLogging(name string) (*Logging, error) {
-	fileName := fmt.Sprintf("/tmp/spm_%s.log", name)
-	// create logfile with given name
-	logfile, err := os.OpenFile(fileName, os.O_APPEND|os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0700)
-	if err != nil {
-		return nil, err
+func NewLogging(name string) (*Logger, error) {
+	linkname := "/tmp/spm/" + name + ".log"
+	logfile := &lumberjack.Logger{
+		Filename:   linkname,
+		MaxSize:    1024, //mb
+		MaxBackups: 10,
+		MaxAge:     7, // days
+		Compress:   false,
 	}
 
 	// create random log color code
@@ -29,27 +35,34 @@ func NewLogging(name string) (*Logging, error) {
 
 	prefix := loggerPrefix(code, name)
 
-	return &Logging{
-		Prefix:   prefix,
+	return &Logger{
+		Prefix:   []byte(prefix),
 		LogColor: code,
 		Logfile:  logfile,
+		filename: linkname,
 	}, nil
 }
 
+func (l *Logger) FileName() string {
+	return l.filename
+}
+
 // Write writes given string into Logfile
-func (l *Logging) Write(s string) error {
-	if _, err := l.Logfile.WriteString(s + "\n"); err != nil {
+func (l *Logger) Write(s []byte) error {
+	if _, err := l.Logfile.Write(s); err != nil {
 		return err
 	}
 	return nil
 }
 
+var ln = []byte("\n")
+
 // Output reads the in then writes into both stdout and logfile
-func (l *Logging) Output(in *bufio.Scanner) error {
+func (l *Logger) Output(in *bufio.Scanner) error {
 	for in.Scan() {
-		log := l.Prefix + in.Text()
-		fmt.Fprintln(os.Stdout, log)
-		l.Write(log)
+		_ = l.Write(l.Prefix)
+		_ = l.Write(in.Bytes())
+		_ = l.Write(ln)
 	}
 
 	if err := in.Err(); err != nil {
@@ -59,7 +72,7 @@ func (l *Logging) Output(in *bufio.Scanner) error {
 	return nil
 }
 
-func (l *Logging) Close() error {
+func (l *Logger) Close() error {
 	if err := l.Logfile.Close(); err != nil {
 		return err
 	}

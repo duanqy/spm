@@ -7,7 +7,7 @@ import (
 type Task struct {
 	Name    string
 	Command []string
-	Logging *Logging
+	Logger  *Logger
 
 	NotifyEnd chan bool `json:"-"`
 	Cmd       *exec.Cmd `json:"-"`

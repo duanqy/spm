@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 )
 
@@ -76,7 +77,6 @@ func daemonStop(ctx *cli.Context) error {
 	return err
 }
 
-
 func daemonStatus(ctx *cli.Context) error {
 	status, err := newDaemon().Status()
 	if err != nil {
@@ -93,7 +93,7 @@ func startDaemon(c *cli.Context) {
 
 	// listen for user termination
 	interrupt := make(chan os.Signal, 1)
-	signal.Notify(interrupt,os.Interrupt,os.Kill, syscall.SIGTERM)
+	signal.Notify(interrupt, os.Interrupt, os.Kill, syscall.SIGTERM)
 
 	// start listening for cli apps
 	go func() {
@@ -116,7 +116,7 @@ func startDaemon(c *cli.Context) {
 
 	for {
 		select {
-		case conn := <- sock.Connection:
+		case conn := <-sock.Connection:
 			go handleMessage(<-conn.Message, conn, manager)
 		case killSignal := <-interrupt:
 			stdlog.Println("Got signal:", killSignal)
@@ -136,11 +136,10 @@ func startDaemon(c *cli.Context) {
 	}
 }
 
-
 func handleMessage(mes spm.Message, conn *spm.Socket, manager *spm.Manager) {
 	defer func() {
 		if err := conn.Close(); err != nil {
-			log.Println("close conn error: ",err)
+			log.Println("close conn error: ", err)
 		}
 	}()
 
@@ -161,13 +160,20 @@ func handleMessage(mes spm.Message, conn *spm.Socket, manager *spm.Manager) {
 		} else {
 			manager.StopAll()
 		}
-	case "logs":
+	case "log":
 		job := mes.Arguments[0]
 		if job == "" {
+			_ = conn.Send(spm.Message{
+				JobLogs: []string{"task name cannot be empty"},
+			})
 			return
 		}
+		n, _ := strconv.ParseUint(mes.Arguments[1], 10, 64)
+		if n == 0 {
+			n = 200
+		}
 		if err := conn.Send(spm.Message{
-			JobLogs: manager.ReadLog(job, 200),
+			JobLogs: manager.ReadLog(job, 2),
 		}); err != nil {
 			log.Println(err)
 		}

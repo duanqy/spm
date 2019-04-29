@@ -3,6 +3,7 @@ package spm
 import (
 	"bufio"
 	"fmt"
+	"github.com/hpcloud/tail"
 	"io"
 	"log"
 	"os"
@@ -10,8 +11,6 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-
-	"github.com/rogpeppe/rog-go/reverse"
 )
 
 type Manager struct {
@@ -67,7 +66,7 @@ func (m *Manager) Start(task Task) {
 	if err != nil {
 		log.Fatal(err)
 	} else {
-		task.Logging = logging
+		task.Logger = logging
 	}
 
 	pr, pw, err := os.Pipe()
@@ -77,9 +76,10 @@ func (m *Manager) Start(task Task) {
 	// read command's stdout line by line
 	in := bufio.NewScanner(pr)
 	go func() {
-		if err := task.Logging.Output(in); err != nil {
+		if err := task.Logger.Output(in); err != nil {
 			log.Fatal(err)
 		}
+		fmt.Println("logger stoped")
 	}()
 
 	for i := range task.Need {
@@ -121,8 +121,8 @@ func (m *Manager) taskEnded(task Task) {
 	m.mu.Lock()
 	delete(m.Tasks, task.Name)
 	m.mu.Unlock()
-	if err := task.Logging.Close(); err != nil {
-		log.Println("close task.Logging:", err)
+	if err := task.Logger.Close(); err != nil {
+		log.Println("close task.Logger:", err)
 	}
 	log.Println(fmt.Sprintf("task `%s` ended", task.Name))
 	task.NotifyEnd <- true
@@ -175,11 +175,15 @@ func (m *Manager) ReadLog(task string, n int) (lines []string) {
 		return
 	}
 
-	file := m.Tasks[task].Logging.Logfile
-	scanner := reverse.NewScanner(file)
-	for i := 0; i < n && scanner.Scan(); i++ {
-		lines = append(lines, scanner.Text())
+	filename := m.Tasks[task].Logger.FileName()
+	lines = append(lines, fmt.Sprintf("tail %s of %d lines", filename, n))
+	t, err := tail.TailFile(filename, tail.Config{Follow: false})
+	if err != nil {
+		lines = append(lines, err.Error())
+		return
 	}
-
+	for line := range t.Lines {
+		lines = append(lines, line.Text)
+	}
 	return lines
 }

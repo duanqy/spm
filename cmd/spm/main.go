@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"regexp"
+	"strconv"
 )
 
 var procfile string
@@ -22,8 +23,8 @@ func main() {
 
 	app.Commands = cli.Commands{
 		{
-			Name:  "daemon",
-			Usage: "run spm daemon service",
+			Name:   "daemon",
+			Usage:  "run spm daemon service",
 			Action: startDaemon,
 			Subcommands: cli.Commands{
 				{
@@ -49,7 +50,7 @@ func main() {
 			},
 		},
 		{
-			Name:"start",
+			Name: "start",
 			Flags: []cli.Flag{
 				cli.StringFlag{
 					Name:        "file, f",
@@ -58,23 +59,30 @@ func main() {
 					Destination: &procfile,
 				},
 			},
-			Usage:"Starts tasks if present in Procfile",
+			Usage:  "Starts tasks if present in Procfile",
 			Action: startAction,
 		},
 		{
-			Name:"stop",
-			Usage:" Stop tasks if currently running",
+			Name:   "stop",
+			Usage:  " Stop tasks if currently running",
 			Action: stopAction,
 		},
 		{
-			Name:"list",
-			Usage:"Lists all running tasks",
+			Name:   "list",
+			Usage:  "Lists all running tasks",
 			Action: listAction,
 		},
 		{
-			Name:"log",
-			Usage:"Prints last 200 lines of task's logfile",
-			UsageText:"spm log [task...]",
+			Name:      "log",
+			Usage:     "Prints last n lines of task's logfile",
+			UsageText: "spm log [task...]",
+			Flags: []cli.Flag{
+				cli.Uint64Flag{
+					Name:  "n",
+					Value: 200,
+					Usage: "the line number",
+				},
+			},
 			Action: logsAction,
 		},
 	}
@@ -84,7 +92,7 @@ func main() {
 	}
 }
 
-func startAction(c *cli.Context)  {
+func startAction(c *cli.Context) {
 	procfile := getProcfilePath(procfile)
 	file, err := os.Open(procfile)
 	if err != nil {
@@ -132,7 +140,7 @@ func startAction(c *cli.Context)  {
 	log.Println("done")
 }
 
-func stopAction(c *cli.Context)  {
+func stopAction(c *cli.Context) {
 	sock := spm.NewSocket()
 	if err := sock.Dial(); err != nil {
 		log.Fatal(err)
@@ -149,7 +157,7 @@ func stopAction(c *cli.Context)  {
 	log.Println("done")
 }
 
-func listAction(c *cli.Context)  {
+func listAction(c *cli.Context) {
 	sock := spm.NewSocket()
 	if err := sock.Dial(); err != nil {
 		log.Fatal(err)
@@ -180,20 +188,19 @@ func logsAction(c *cli.Context) error {
 	}
 
 	if err := sock.Send(spm.Message{
-		Command:   "logs",
-		Arguments: []string{c.Args().Get(1)},
+		Command:   "log",
+		Arguments: []string{c.Args().Get(0), strconv.FormatUint(c.Uint64("n"), 10)},
 	}); err != nil {
 		log.Fatal(err)
 	}
 
 	m := <-sock.Message
-	for i := len(m.JobLogs) - 1; i >= 0; i-- {
+	for i := range m.JobLogs {
 		fmt.Println(m.JobLogs[i])
 	}
 
 	return nil
 }
-
 
 func getProcfilePath(input string) string {
 	re := regexp.MustCompile("(/)$|(/Procfile(\\s+?|$))")
