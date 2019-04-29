@@ -1,4 +1,5 @@
 .idea/
 .DS_Store
-cmd/spm/spm*
+cmd/spm/spm
+cmd/spm/spm.exe
 cmd/spm/Procfile

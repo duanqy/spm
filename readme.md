@@ -41,28 +41,21 @@ Following Procfile has two jobs (tabs for legibility):
 
 ```
 # Serve spm's github repository on local machine
-repo:   rm -rf spm && \
-        git clone https://github.com/bytegust/spm.git && \
-        http-server ./spm -p 8080
-
+task repo {
+    need rm -rf spm
+    need git clone https://github.com/bytegust/spm.git
+    command http-server ./spm -p 8080
+}
 # Download and serve a webpage on local machine
-apod: \
-
-        # Create directory that will be served
-        rm -rf astropix && \
-        mkdir astropix && \
-        cd astropix && \
-
-        # Downloads the content of https://apod.nasa.gov/apod/astropix.html
-        wget -A.jpg -e robots=off -k \ 
-        --user-agent="Mozilla/5.0 (compatible; Konqueror/3.0.0/10; Linux)" \
-        --no-check-certificate https://apod.nasa.gov/apod/astropix.html && \
-
-        # Rename file as index
-        mv $(ls *.html | head -1) index.html && \
-
-        # Serve webpage
-        http-server -p 8081
+task apod {
+    user www-data
+    group www-data
+    dir /data/www
+    need rm -rf astropix
+    need mkdir astropix
+    need wget -A.jpg -e robots=off -k --user-agent="Mozilla/5.0 (compatible; Konqueror/3.0.0/10; Linux)" --no-check-certificate https://apod.nasa.gov/apod/astropix.html
+    command http-server -p 8081 
+}
 ```
 
 Suppose that we have the Procfile above inside a folder named _test_. After starting the daemon by `spm` command we will be able to run jobs, inside our Procfile, from the clients, namely, other terminal windows or tabs.
